@@ -1,9 +1,9 @@
 # 🧟 Unity State Machine Game – Zombie Combat Adventure
-
+# Game Download Link :- https://magicemperor30.itch.io/zombie-killer
 ## 🎮 Overview
 
 A Unity-based side-scroller that demonstrates a **modular state machine system** supporting multiple gameplay modes: on-foot navigation, combat, and vehicle driving. The game is built with scalability and mobile performance in mind and includes interactive AI zombies, dynamic obstacles, and a complete gameplay loop.
-
+The Game Here has a different Character cause the its size was greater than 100mbs which was causing problem for uploading so i have uploaded a different character which works too any humanoid character is fine.
 ## 🚀 Features
 
 ### ✅ Modular State Machine System
