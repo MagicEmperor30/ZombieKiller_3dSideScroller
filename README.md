@@ -112,12 +112,4 @@ git clone https://github.com/MagicEmperor30/ZombieKiller_3dSideScroller.git
 * ✅ Buildable for Android
 * ✅ Well-documented and modular C# code
 
----
 
-## 📩 How to Apply
-
-Please submit:
-
-1. Link to this GitHub repository
-2. Your resume and game dev portfolio
-3. A brief write-up of your approach to state management (optional: include in README)
