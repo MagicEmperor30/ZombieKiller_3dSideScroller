@@ -40,7 +40,7 @@ public class ZombieAttackState : IZombieState
             lastAttackTime = Time.time;
         }
 
-        if (zombie.zombieHealth.IsEnraged())
+        if (zombie.zombieHealth.IsEnraged() && !zombie.IsPlayerInRange())
         {
             zombie.StopAttackAnimation();
             zombie.TransitionToState(zombie.runState);
