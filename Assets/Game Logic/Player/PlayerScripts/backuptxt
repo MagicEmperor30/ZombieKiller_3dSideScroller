@@ -1,0 +1,430 @@
+using UnityEngine;
+using UnityEngine.InputSystem;
+
+[RequireComponent(typeof(Rigidbody))]
+public class PlayerController : MonoBehaviour
+{
+    [HideInInspector] public StateMachine stateMachine;
+    public float walkSpeed = 2f;
+    public float runSpeed = 4f;
+    public float acceleration = 10f; // How quickly we accelerate/decelerate
+    public float fireRate = 0.5f; // seconds between shots
+    private float nextFireTime = 0f;    
+    private bool inCombat = false;
+    private bool facingRight = true;
+    public GameObject bulletPrefab;
+    public GameObject forceField;
+    public Transform shootPoint;
+    public Transform PlayerHipTransform;
+    private Rigidbody rb;
+    [HideInInspector] public Transform vehicleSeatTarget; 
+    [HideInInspector] public Animator animator;
+    [HideInInspector] public VehicleControllerWithWheels currentVehicle;
+    [HideInInspector] public bool isDriving;
+    [HideInInspector] public bool canControl = true;
+    public bool isDead =false;
+    private bool isDefending;
+    public bool IsDefending() => isDefending;
+    private Vector2 input;
+    private bool shootInput;
+    private bool defendInput;
+    private float currentSpeed;
+    private bool isRunning;
+    private bool wasFacingRightBeforeDriving;
+
+    private Vector3 currentVelocity;
+
+    void Start()
+    {
+        rb = GetComponent<Rigidbody>();
+        rb.constraints = RigidbodyConstraints.FreezeRotation | RigidbodyConstraints.FreezePositionZ;
+        animator = GetComponentInChildren<Animator>();
+        stateMachine = new StateMachine();
+        stateMachine.SetState(new IdleState(this));
+    }
+
+    void Update()
+    {
+        if(isDead) return;
+        if (!isDriving && canControl && WantsToDefend() && !(stateMachine.currentState is DefendState))
+        {
+            stateMachine.SetState(new DefendState(this));
+            return;
+        }
+        stateMachine.Update();
+        if (!isDriving && canControl && input.x != 0)
+            CheckAndFlip(input.x);
+            // Handle shooting with fire rate
+        if (WantsToShoot() && inCombat && Time.time >= nextFireTime)
+        {
+            Shoot();
+            nextFireTime = Time.time + fireRate;
+        }
+  
+    }
+
+    void FixedUpdate()
+    {
+        if (isDriving || !canControl)
+            return;
+
+        Vector3 targetVelocity = Vector3.zero;
+
+        if (currentSpeed > 0 && input.magnitude > 0)
+        {
+            Vector3 targetDirection = new Vector3(input.x, 0, 0).normalized;
+            targetVelocity = targetDirection * currentSpeed;
+        }
+
+        currentVelocity = Vector3.Lerp(currentVelocity, targetVelocity, acceleration * Time.fixedDeltaTime);
+        Vector3 newPosition = rb.position + currentVelocity * Time.fixedDeltaTime;
+        rb.MovePosition(newPosition);
+    }
+
+    private void CheckAndFlip(float inputX)
+    {
+        if (inputX > 0 && !facingRight)
+            Flip();
+        else if (inputX < 0 && facingRight)
+            Flip();
+    }
+
+    private void Flip()
+    {
+        facingRight = !facingRight;
+
+        Vector3 scale = transform.localScale;
+        scale.x *= -1; // flip horizontally
+        transform.localScale = scale;
+    }
+
+    public void SetAnimSpeed(float value)
+    {
+        if (animator != null)
+            animator.SetFloat("speed", value);
+    }
+
+    public void Move(float speed)
+    {
+        currentSpeed = speed;
+    }
+    public void UpdateLocomotionAnimation()
+    {
+        float animSpeed = IsMoving()
+            ? (IsRunning() ? 1f : 0.5f)
+            : 0f;
+
+        animator.SetFloat("speed", animSpeed);
+    }
+    public Vector2 GetInput() => input;
+
+    public bool IsMoving() => Mathf.Abs(input.x) > 0.1f;
+    public bool IsRunning() => isRunning && IsMoving();
+
+    // Input System callbacks (assigned via PlayerInput component)
+    public void OnMove(InputAction.CallbackContext context)
+    {
+        if (context.performed || context.started)
+            input = context.ReadValue<Vector2>();
+        else if (context.canceled)
+            input = Vector2.zero;
+    }
+
+    public void OnRun(InputAction.CallbackContext context)
+    {
+        isRunning = context.performed || context.started;
+        if (context.canceled)
+            isRunning = false;
+    
+    }
+    public void OnShoot(InputAction.CallbackContext context)
+    {
+        shootInput = context.performed || context.started;
+        if (context.canceled)
+            shootInput = false;
+    }
+
+    public void OnDefend(InputAction.CallbackContext context)
+    {
+        defendInput = context.performed || context.started;
+        if (context.canceled)
+            defendInput = false;
+        
+    }
+    public void OnDrive(InputAction.CallbackContext context)
+    {
+        if (context.performed && currentVehicle != null)
+        {
+            if (!isDriving)
+            {
+                // Set driving state first, let it handle EnterVehicle
+                stateMachine.SetState(new DrivingState(this, currentVehicle));
+            }
+            else
+            {
+                currentVehicle.ExitVehicle();
+            }
+        }
+    }
+
+    public void EnterVehicle(VehicleControllerWithWheels vehicle)
+    {
+        currentVehicle = vehicle;
+        isDriving = true;
+
+        // Parent to seat
+        if (vehicle.seatPoint != null)
+        {
+            transform.SetParent(vehicle.seatPoint);
+            transform.localPosition = Vector3.zero;
+            transform.localRotation = Quaternion.identity;
+            // Make sure the player is not flipped when entering
+            wasFacingRightBeforeDriving = facingRight;
+            if(!facingRight){
+                Vector3 scale = transform.localScale;
+                scale.x = Mathf.Abs(scale.x); // Ensure facing right
+                transform.localScale = scale;
+            }
+            PlayerHipTransform.localPosition = vehicle.seatPoint.transform.localPosition;
+            PlayerHipTransform.localRotation = Quaternion.identity;
+        }
+
+        rb.isKinematic = true;
+        GetComponent<Collider>().enabled = false;
+        animator.SetBool("isDriving", true);
+        canControl = false;
+
+        // Optional: stop any movement animation
+        SetAnimSpeed(0f);
+    }
+
+    public void ExitVehicle(Transform exitPoint)
+    {
+        isDriving = false;
+        currentVehicle = null;
+
+        // Unparent before moving
+        transform.SetParent(null);
+
+        if (exitPoint != null)
+        {
+            transform.position = exitPoint.position;
+            transform.rotation = Quaternion.identity;
+            // Restore facing direction
+            facingRight = wasFacingRightBeforeDriving;
+
+            Vector3 scale = transform.localScale;
+            scale.x = facingRight ? Mathf.Abs(scale.x) : -Mathf.Abs(scale.x);
+            transform.localScale = scale;
+        }
+
+        rb.isKinematic = false;
+        GetComponent<Collider>().enabled = true;
+        animator.SetBool("isDriving", false);
+        canControl = true;
+
+        stateMachine.SetState(new IdleState(this));
+    }
+
+
+    public void OnToggleCombat(InputAction.CallbackContext context)
+    {
+        if (isDriving || !canControl) return;
+        if (context.performed)
+        {
+            bool newCombatState = !inCombat;
+            SetCombatMode(newCombatState);
+            stateMachine.SetState(newCombatState ? new CombatMovementState(this) : new IdleState(this));
+        }
+    }
+    public void Shoot()
+    {
+
+        if (bulletPrefab == null) return;
+
+        Vector3 spawnPos = shootPoint ? shootPoint.position : transform.position + Vector3.right;
+        GameObject bullet = Instantiate(bulletPrefab, spawnPos, bulletPrefab.transform.rotation);
+
+        if (bullet.TryGetComponent<Rigidbody>(out var rb))
+        {
+            // Use facing direction
+            Vector3 shootDir = facingRight ? Vector3.right : Vector3.left;
+
+            float bulletSpeed = 10f;
+            float totalSpeed = bulletSpeed + Vector3.Dot(currentVelocity, shootDir);
+            rb.linearVelocity = shootDir * totalSpeed;
+        }
+
+        Destroy(bullet, 2f);
+    }
+    public void SetCombatMode(bool value)
+    {
+          inCombat = value;
+        animator.SetBool("isInCombat", value);
+    }
+    public void SetDefend(bool value)
+    {
+        isDefending = value;     
+        if(forceField != null){
+            forceField.gameObject.SetActive(value);
+        }
+    }
+    private bool brakeInput;
+
+    public void OnBrake(InputAction.CallbackContext context)
+    {
+        brakeInput = context.performed || context.started;
+        if (context.canceled)
+            brakeInput = false;
+    }
+
+    public bool WantsToBrake() => brakeInput;
+    public bool IsInCombat() => inCombat;    
+    public bool WantsToShoot() => shootInput;
+    public bool WantsToDefend() => defendInput; 
+
+}
+
+
+
+
+#region Raycast based shooting
+    // public void Shoot()
+    // {
+    //     Vector3 shootDir = facingRight ? Vector3.right : Vector3.left;
+    //     Vector3 shootOrigin = shootPoint ? shootPoint.position : transform.position;
+
+    //     if (Physics.Raycast(shootOrigin, shootDir, out RaycastHit hit, 100f, hitMask, QueryTriggerInteraction.Ignore))
+    //     {
+    //         HandleHit(hit.collider, hit.point, hit.normal);
+    //         SpawnTrail(shootOrigin, hit.point);
+    //     }
+    //     else
+    //     {
+    //         Vector3 missPoint = shootOrigin + shootDir * 20f;
+    //         SpawnTrail(shootOrigin, missPoint);
+    //     }
+    // }
+
+    // private void HandleHit(Collider other, Vector3 hitPoint, Vector3 hitNormal)
+    // {
+    //     int damage = 10;
+
+    //     Debug.Log($"Hit detected on: {other.name} at position: {hitPoint}");
+
+    //     // Draw a short debug ray showing surface normal
+    //     Debug.DrawRay(hitPoint, hitNormal * 0.5f, Color.red, 1f);
+
+    //     if (other.CompareTag("Enemy"))
+    //     {
+    //         Debug.Log("Target is Enemy");
+
+    //         if (other.TryGetComponent<ZombieHealth>(out var health))
+    //         {
+    //             health.TakeDamage(damage);
+    //             Debug.Log($"Damage applied: {damage}");
+    //         }
+
+    //         EmitHitEffect(hitPoint, hitNormal);
+    //         return;
+    //     }
+
+    //     if (other.TryGetComponent<ObstacleScript>(out var obstacle) || other.CompareTag("Obstacle"))
+    //     {
+    //         Debug.Log("Target is Obstacle");
+
+    //         Vector3 pushDir = (other.transform.position - hitPoint).normalized;
+    //         obstacle.TakeDamage(damage, pushDir);
+    //         Debug.Log($"Obstacle pushed in direction: {pushDir}");
+
+    //         EmitHitEffect(hitPoint, hitNormal);
+    //         return;
+    //     }
+
+    //     if (!other.isTrigger)
+    //     {
+    //         Debug.Log("Hit solid object (non-trigger), emitting hit effect.");
+    //         EmitHitEffect(hitPoint, hitNormal);
+    //     }
+    // }
+
+    // private void EmitHitEffect(Vector3 position, Vector3 normal)
+    // {
+    //     if (hitEffect != null)
+    //     {
+    //         hitEffect.transform.position = position;
+    //         hitEffect.transform.forward = normal;
+    //         hitEffect.Emit(1); // emit a single burst
+    //     }
+    // }
+
+    // private void SpawnTrail(Vector3 start, Vector3 end)
+    // {
+    //     if (bulletTrail == null) return;
+
+    //     StopAllCoroutines(); // Optional: stop previous trail animation if needed
+    //     bulletTrail.Clear();
+    //     bulletTrail.gameObject.SetActive(true);
+    //     bulletTrail.transform.position = start;
+
+    //     StartCoroutine(AnimateTrail(bulletTrail, start, end));
+    // }
+
+    // private IEnumerator AnimateTrail(TrailRenderer trail, Vector3 start, Vector3 end)
+    // {
+    //     float time = 0f;
+    //     float duration = 0.05f;
+    //     while (time < 1f)
+    //     {
+    //         trail.transform.position = Vector3.Lerp(start, end, time);
+    //          time += Time.deltaTime / duration;
+    //          yield return null;
+    //     }
+    //         trail.transform.position = end;
+    //     // trail remains active; you can deactivate if needed after some time
+    // }
+#endregion 
+using UnityEngine;
+
+public class DefendState : IState
+{
+    private PlayerController player;
+    private float defendTimer = 4f; // Defend duration in seconds
+
+    public DefendState(PlayerController player)
+    {
+        this.player = player;
+    }
+
+    public void Enter()
+    {
+        player.SetAnimSpeed(0f); // Freeze animation
+        player.SetDefend(true);  // Enable shield
+        player.Move(0f);         // Stop movement
+        Debug.Log("Entered Defend State");
+    }
+
+    public void Update()
+    {
+        defendTimer -= Time.deltaTime;
+
+        if (defendTimer <= 0f)
+        {
+            player.SetDefend(false); // Ends defend and triggers cooldown
+            player.stateMachine.SetState(player.IsInCombat()
+                ? new CombatMovementState(player)
+                : new IdleState(player));
+            Debug.Log("Exited Defend State (auto)");
+        }
+    }
+
+    public void Exit()
+    {
+        player.SetDefend(false); // Just in case
+    }
+}
+
+
+
+
+
